@@ -8,6 +8,7 @@ chroma_db/
 .git/
 models/
 *.egg-info
+.idea/
 
 # Virtual environments
 .venv

@@ -2,11 +2,12 @@ import os
 import spacy
 import json
 import numpy as np
+import glob
+import time
 
 from langchain.docstore.document import Document
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.document_loaders import DirectoryLoader
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -17,11 +18,47 @@ from transformers import (
     AutoTokenizer,
     pipeline
 )
-from bs4 import BeautifulSoup
 
 # For clustering
 from sklearn.cluster import KMeans
+from typing import List
 
+class MyDirectoryLoader:
+    """
+    A simple custom loader that:
+      1. Recursively loads .md or .html files in a given directory.
+      2. Attaches file name, file path, and modification timestamp to each Document's metadata.
+    """
+    def __init__(self, path: str, glob: str = "**/*.md"):
+        self.directory = path
+        self.glob_pattern = glob
+
+    def load(self) -> List[Document]:
+        doc_list = []
+        full_pattern = os.path.join(self.directory, self.glob_pattern)
+        files_found = glob.glob(full_pattern, recursive=True)
+
+        for file_path in files_found:
+            with open(file_path, "r", encoding="utf-8") as f:
+                text_content = f.read()
+
+            # Gather some metadata
+            file_name = os.path.basename(file_path)
+            mod_time = os.path.getmtime(file_path)
+            mod_time_str = time.ctime(mod_time)  # or store as numeric timestamp
+
+            metadata = {
+                "source": file_name,
+                "absolute_path": file_path,
+                "modified_time": mod_time_str
+                # You could add more (URL, images, etc.) if relevant
+            }
+
+            # Create the Document with the text content and attached metadata
+            doc = Document(page_content=text_content, metadata=metadata)
+            doc_list.append(doc)
+
+        return doc_list
 
 def extract_entities_and_relationships(
         text_value: str,
@@ -42,7 +79,7 @@ def build_or_load_vectorstore(
         persist_directory: str,
         nlp_pipeline: spacy.Language,
         use_knowledge_graph: bool = False,
-        num_clusters: int = 8
+        num_clusters: int = 3
 ) -> Chroma:
     """
     Clusters the chunks into `num_clusters` groups and keeps only the
@@ -59,10 +96,9 @@ def build_or_load_vectorstore(
         )
     else:
         print("Creating new Chroma vector store...")
-        loader = DirectoryLoader(
+        loader = MyDirectoryLoader(
             path=docs_directory,
             glob='**/*.md',
-            show_progress=True
         )
         documents = loader.load()
 
@@ -97,7 +133,6 @@ def build_or_load_vectorstore(
             })
 
         # 2. Embed each chunk using your HuggingFaceEmbeddings
-        #    We'll also apply clean_html to reduce raw HTML tokens
         all_texts = [item["text"] for item in chunk_data_list]
         embeddings_list = [embedding_model.embed_query(txt) for txt in all_texts]
 
